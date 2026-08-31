@@ -53,11 +53,21 @@ screen.
   automatically. The tab bar's **"+"** opens saved connections — **each pick
   opens a fresh tab/session, even when that connection is already connected
   in another tab** — or starts a manual entry.
-- **Live terminal column** — while the terminal panel is open it lives in
-  DSH's native right details column (the conversation shrinks instead of
-  being covered); closing it restores the original right column (tool
-  details) untouched, and a slim SSH rail on the right edge reopens the
-  panel. Each connection owns **one real interactive shell (PTY)**: the
+- **Live terminal panel — two surfaces, one state** — the panel body can
+  live in **DSH's native right details column** (the conversation shrinks
+  instead of being covered; closing restores the original right column
+  untouched; a slim SSH rail on the right edge reopens it) **or inside
+  [dsh-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar)**:
+  when that plugin is installed, the same panel body registers as a sidebar
+  tab (`dsh-ssh:terminal` — visible in its **+** menu, with a live
+  connection-count badge), and the AI-connect auto-open lands there (opening
+  and expanding the sidebar). Both surfaces share the one host-managed state
+  stream, so switching never forks the terminals. `panelSurface` (see
+  settings below) chooses the surface: `auto` (default — sidebar when
+  installed), `sidebar` (prefer sidebar), `native` (always the built-in
+  column). Without dsh-better-sidebar everything falls back to the native
+  column automatically. Each connection owns **one real interactive shell
+  (PTY)**: the
   login banner (motd / Last login), the remote prompt `user@host:path$`,
   input echo and `cd` updates all come from the remote shell, exactly like a
   native SSH client. There is **no input box and no copy control** — click
@@ -98,7 +108,7 @@ screen.
 dsh plugin --profile web add @jmcc-guo/dsh-ssh
 
 # or directly from GitHub
-dsh plugin --profile web add "github:jmcc-guo/dsh-ssh#v0.3.1"
+dsh plugin --profile web add "github:jmcc-guo/dsh-ssh#v0.4.0"
 
 # or from a local checkout
 dsh plugin --profile web add <path-to-this-repo>
@@ -154,6 +164,7 @@ the plugin loads fine (verified at runtime).
 | `outputLimitBytes` | 1048576 | per-connection terminal buffer cap |
 | `execOutputMaxBytes` | 200000 | cap on output returned to the model per command |
 | `recordsPath` | `$DSH_HOME/storages/dsh-ssh/connections.json` | records file override |
+| `panelSurface` | `auto` | where the Web panel lives: `auto` = dsh-better-sidebar when installed, else the native column; `sidebar` = prefer dsh-better-sidebar (falls back to native when absent); `native` = always the built-in details column. Applied live to open panels |
 
 ## Model tools
 
@@ -214,6 +225,7 @@ node scripts/test-acceptance.mjs   # 65-check manager-level acceptance suite
 node scripts/smoke.mjs             # quick smoke test
 node scripts/test-panel-ws.mjs     # panel WebSocket channel drive (test web instance on :3081)
 node scripts/test-rename.mjs       # focused rename test (no SSH server needed)
+node scripts/test-client-surface.mjs  # dual-surface (native column / dsh-better-sidebar) logic — no server needed
 ```
 
 ## Contributing
