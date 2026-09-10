@@ -40,9 +40,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Jump host and target point at the same local server; the target rides the
 // tunnel (dst 127.0.0.1:2222 is resolved from the jump host's side).
-let r = await manager.createRecord({ name: 'gw', host: '127.0.0.1', port: 2222, user: 'root', auth: { privateKeyPath: KEY_PATH }, source: 'ai' });
+let r = await manager.createRecord({ name: 'gw', host: '127.0.0.1', port: 2222, user: 'root', auth: { privateKeyPath: KEY_PATH } });
 check('create gw record', r.ok, r.error);
-r = await manager.createRecord({ name: 'target', host: '127.0.0.1', port: 2222, user: 'root', auth: { privateKeyPath: KEY_PATH }, tunnel: 'gw', source: 'ai' });
+r = await manager.createRecord({ name: 'target', host: '127.0.0.1', port: 2222, user: 'root', auth: { privateKeyPath: KEY_PATH }, tunnel: 'gw' });
 check('create tunneled target record', r.ok, r.error);
 
 let c = await manager.connect('target');
@@ -55,6 +55,8 @@ let e = await manager.aiExec({ connection: 'target', command: 'whoami; hostname'
 check('exec through tunnel', e.ok && e.status === 'done' && e.exitCode === 0 && (e.output ?? '').includes('root'), JSON.stringify(e).slice(0, 200));
 
 // A second tunneled tab shares the same tunnel client (refcounted).
+// openNewSession is now an alias of connect: with a tab already open it
+// returns a fresh session in a new tab.
 const s2 = await manager.openNewSession('target');
 check('second tunneled tab ok', s2.ok, s2.error);
 check('tunnel client shared', manager.tunnelClients.get('gw')?.sessions.size === 2,

@@ -31,8 +31,8 @@ function check(name, ok, detail = '') {
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`);
 }
 
-// 1. password auth (user-source; shared-shell input path)
-let r = await manager.createRecordWithSecrets({ name: 'box-pw', host: '127.0.0.1', port: 2222, user: 'jmcc', password: 'testpass123', source: 'user' });
+// 1. password auth (shared-shell input path)
+let r = await manager.createRecordWithSecrets({ name: 'box-pw', host: '127.0.0.1', port: 2222, user: 'jmcc', password: 'testpass123' });
 check('create password record', r.ok, r.error);
 let c = await manager.connect('box-pw');
 check('connect with password', c.ok, c.error);
@@ -47,8 +47,8 @@ check('shell echo + output visible', text.includes('hello') && text.includes('jm
 let s1 = manager.statusOf('box-pw');
 check('no busy state on idle shell', s1.busyBy === null, JSON.stringify(s1.busyBy));
 
-// 2. key auth (ai-source; AI exec path)
-r = await manager.createRecord({ name: 'box-key', host: '127.0.0.1', port: 2222, user: 'root', auth: { privateKeyPath: KEY_PATH }, source: 'ai' });
+// 2. key auth (AI exec path)
+r = await manager.createRecord({ name: 'box-key', host: '127.0.0.1', port: 2222, user: 'root', auth: { privateKeyPath: KEY_PATH } });
 check('create key record', r.ok, r.error);
 c = await manager.connect('box-key');
 check('connect with key', c.ok, c.error);
@@ -56,16 +56,16 @@ let e = await manager.aiExec({ connection: 'box-key', command: 'whoami && hostna
 check('exec as root', e.ok && e.status === 'done' && e.exitCode === 0 && (e.output ?? '').includes('root'), JSON.stringify(e).slice(0, 200));
 
 // 3. duplicate name rejection
-r = await manager.createRecordWithSecrets({ name: 'box-pw', host: 'x', user: 'y', password: 'z', source: 'user' });
+r = await manager.createRecordWithSecrets({ name: 'box-pw', host: 'x', user: 'y', password: 'z' });
 check('duplicate name rejected', !r.ok && r.error.includes('already taken'), r.error);
 
 // 4. inline secret rejection
-r = await manager.createRecord({ name: 'box-bad', host: '127.0.0.1', user: 'jmcc', auth: { type: 'password', password: 'testpass123' }, source: 'ai' });
+r = await manager.createRecord({ name: 'box-bad', host: '127.0.0.1', user: 'jmcc', auth: { type: 'password', password: 'testpass123' } });
 check('inline secret rejected', !r.ok, r.error);
 
-// 5. list/status
+// 5. list/status — every saved record is AI-visible (no source filter)
 const list = await manager.aiListPublic();
-check('list contains ai records only', Array.isArray(list) && list.every((x) => x.source === 'ai') && list.some((x) => x.name === 'box-key'), JSON.stringify(list.map((x) => x.name)));
+check('list contains all records (no source filter)', Array.isArray(list) && list.some((x) => x.name === 'box-pw') && list.some((x) => x.name === 'box-key'), JSON.stringify(list.map((x) => x.name)));
 const st = manager.statusOf('box-key');
 check('status connected', st?.status === 'connected', JSON.stringify(st));
 

@@ -190,7 +190,7 @@ async function runScenario({ name, sidebar, surface, autoConnect }) {
   if (autoConnect) {
     wsInstance.onmessage({ data: JSON.stringify({ event: 'state', state: {
       records: [],
-      tabs: [{ key: 'box', name: 'box', status: 'connected', source: 'ai' }],
+      tabs: [{ key: 'box', name: 'box', status: 'connected' }],
       panelSurface: surface,
     } }) });
     await new Promise((resolve) => setTimeout(resolve, 30));

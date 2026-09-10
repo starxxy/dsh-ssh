@@ -5,11 +5,15 @@
  * adapt SSH_HOST/SSH_PORT/PW_USER/PW and the WSL distro name below to your
  * machine.
  *
- * Covers: multi-connection to one server, name addressing, mutex (human vs
- * AI), source isolation, transfer user→ai (incl. during a running user
- * command), explicit disconnect vs auto-reconnect, close-tab semantics,
- * credential hygiene, persistence across "restart" (manager re-instantiation
- * over the same records file), long-command async read/kill.
+ * Covers: multi-connection to one server, name addressing, execution mutex
+ * (human input blocked while the AI executes — every connection is
+ * AI-managed, no source distinction), connect-with-open-tab → fresh tab,
+ * explicit disconnect vs auto-reconnect, close-tab semantics, credential
+ * hygiene, persistence across "restart" (manager re-instantiation over the
+ * same records file), long-command async read/kill.
+ *
+ * WSL distro name: override with the WSL_DISTRO environment variable
+ * (default Ubuntu-18.04).
  */
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -30,10 +34,12 @@ function check(name, ok, detail = '') {
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + String(detail).slice(0, 220) : ''}`);
 }
 
+const WSL_DISTRO = process.env.WSL_DISTRO ?? 'Ubuntu-18.04';
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function wsl(cmd) {
-  return execFileSync('wsl', ['-d', 'Ubuntu-18.04', '-u', 'root', '-e', 'bash', '-lc', cmd], { encoding: 'utf8' });
+  return execFileSync('wsl', ['-d', WSL_DISTRO, '-u', 'root', '-e', 'bash', '-lc', cmd], { encoding: 'utf8' });
 }
 
 function restartSshd() {
@@ -52,7 +58,7 @@ function killSshd() {
 
 // Keep one long-lived wsl.exe session open for the whole suite so the WSL VM
 // never restarts between helper calls (a restart kills sshd and /run).
-const vmHolder = spawn('wsl', ['-d', 'Ubuntu-18.04', '-u', 'root', '-e', 'bash', '-lc', 'tail -f /dev/null'], {
+const vmHolder = spawn('wsl', ['-d', WSL_DISTRO, '-u', 'root', '-e', 'bash', '-lc', 'tail -f /dev/null'], {
   stdio: 'ignore',
 });
 await sleep(1500);
@@ -133,9 +139,9 @@ function terminalText(name) {
 // Criterion 3: two independent connections to the SAME server
 // ---------------------------------------------------------------------------
 
-let r = await manager.createRecord({ name: 'web-server', host: SSH_HOST, port: SSH_PORT, user: 'root', auth: { privateKeyPath: KEY_PATH }, source: 'ai' });
+let r = await manager.createRecord({ name: 'web-server', host: SSH_HOST, port: SSH_PORT, user: 'root', auth: { privateKeyPath: KEY_PATH } });
 check('create web-server (key)', r.ok, r.error);
-r = await manager.createRecord({ name: 'db-server', host: SSH_HOST, port: SSH_PORT, user: PW_USER, auth: { passwordRef: 'TEST_PW' }, source: 'ai' });
+r = await manager.createRecord({ name: 'db-server', host: SSH_HOST, port: SSH_PORT, user: PW_USER, auth: { passwordRef: 'TEST_PW' } });
 check('create db-server (password ref)', r.ok, r.error);
 await fakeCredentials.set('TEST_PW', PW);
 
@@ -168,13 +174,13 @@ check('terminal output has no secrets', !terminal.includes(PW));
 check('auth failures are readable', true);
 
 // wrong password → readable error, no secret in error
-r = await manager.createRecordWithSecrets({ name: 'bad-pw', host: SSH_HOST, port: SSH_PORT, user: PW_USER, password: 'WRONGpass!', source: 'user' });
+r = await manager.createRecordWithSecrets({ name: 'bad-pw', host: SSH_HOST, port: SSH_PORT, user: PW_USER, password: 'WRONGpass!' });
 check('create bad-pw record', r.ok);
 c = await manager.connect('bad-pw');
 check('wrong password fails with readable error', !c.ok && c.error && c.error.length > 0 && !c.error.includes('WRONGpass!'), c.error);
 
 // ---------------------------------------------------------------------------
-// Criterion 7: execution mutex (ai-source only, shared-shell model)
+// Criterion 7: execution mutex (every connection, shared-shell model)
 // ---------------------------------------------------------------------------
 // The shared shell must be quiet before AI may run: typing a command, AI
 // waits for the quiet window then runs.
@@ -197,54 +203,51 @@ await waitShellQuiet('web-server'); // `sleep 4` ends → the shell prints its p
 const aiRun = manager.aiExec({ connection: 'web-server', command: 'sleep 3', timeoutMs: 10000 });
 await sleep(300);
 const userBlocked = manager.input('web-server', 'echo HUMAN-DURING-AI');
-check('human input rejected while AI runs (ai-source)', !userBlocked.ok && userBlocked.blocked === true, JSON.stringify(userBlocked).slice(0, 160));
+check('human input rejected while AI runs (all connections)', !userBlocked.ok && userBlocked.blocked === true, JSON.stringify(userBlocked).slice(0, 160));
 await aiRun;
 check('typing works again after the AI command finishes', manager.input('web-server', 'echo AFTER-AI\r').ok);
 
 // ---------------------------------------------------------------------------
-// Criterion 8: source isolation
+// Criterion 8: unified management — every connection is AI-managed
 // ---------------------------------------------------------------------------
-r = await manager.createRecordWithSecrets({ name: 'my-box', host: SSH_HOST, port: SSH_PORT, user: PW_USER, password: PW, source: 'user' });
-check('create user record my-box', r.ok, r.error);
+r = await manager.createRecordWithSecrets({ name: 'my-box', host: SSH_HOST, port: SSH_PORT, user: PW_USER, password: PW });
+check('create record my-box (panel form)', r.ok, r.error);
 c = await manager.connect('my-box');
 check('my-box connects', c.ok, c.error);
 
-const aiOnUser = await manager.aiExec({ connection: 'my-box', command: 'echo hack' });
-check('AI exec on user record rejected', !aiOnUser.ok && aiOnUser.error.includes('created by the user'), aiOnUser.error);
-const aiList2 = manager.aiListPublic();
-check('my-box absent from AI list', !aiList2.some((x) => x.name === 'my-box'), JSON.stringify(aiList2.map((x) => x.name)));
+// No transfer step: the AI can exec on a panel-created record immediately
+const aiOnPanel = await manager.aiExec({ connection: 'my-box', command: 'echo AI-FROM-START' });
+check('AI exec on a panel-created record succeeds immediately', aiOnPanel.ok && (aiOnPanel.output ?? '').includes('AI-FROM-START'), JSON.stringify(aiOnPanel).slice(0, 160));
+check('my-box visible in AI list', manager.aiListPublic().some((x) => x.name === 'my-box'), JSON.stringify(manager.aiListPublic().map((x) => x.name)));
 const stUser = manager.statusOf('my-box');
 check('my-box status is connected', stUser?.status === 'connected');
 
-// user-source input is never disabled: typing always goes straight through
+// Human input is allowed while the AI is idle
 await waitShell('my-box');
 const u1 = manager.input('my-box', 'echo U1\r');
 const u2 = manager.input('my-box', 'echo U2\r');
-check('user-source input always allowed', u1.ok && u2.ok, JSON.stringify({ u1: u1.ok, u2: u2.ok }));
+check('human input allowed while AI idle', u1.ok && u2.ok, JSON.stringify({ u1: u1.ok, u2: u2.ok }));
 await sleep(800);
 
 // ---------------------------------------------------------------------------
-// Criterion 9: ownership transfer user → ai
+// Criterion 9: connect never rejects an already-open connection — it opens
+// a FRESH independent session in a new tab
 // ---------------------------------------------------------------------------
-r = await manager.transferToAi('my-box');
-check('transfer my-box → ai', r.ok, r.error);
-const transferred = manager.statusOf('my-box');
-check('my-box now ai source, still online', transferred?.source === 'ai' && transferred?.status === 'connected', JSON.stringify(transferred).slice(0, 120));
-check('my-box now visible to AI list', manager.aiListPublic().some((x) => x.name === 'my-box'));
-const aiOnUser2 = await manager.aiExec({ connection: 'my-box', command: 'echo AI-NOW' });
-check('AI exec succeeds after transfer', aiOnUser2.ok && (aiOnUser2.output ?? '').includes('AI-NOW'), JSON.stringify(aiOnUser2).slice(0, 160));
-
-// transfer while the shared shell is active → AI must wait/busy
-const typed3 = manager.input('my-box', 'sleep 4; echo LATE\r');
-await sleep(250);
-const busy3 = await manager.aiExec({ connection: 'my-box', command: 'echo X', waitForIdleMs: 600 });
-check('after transfer, active shell blocks AI', !busy3.ok && busy3.status === 'busy', JSON.stringify(busy3).slice(0, 160));
-await waitShellQuiet('my-box'); // `sleep 4` ends → prompt → quiet
-check('shell echo LATE arrived', terminalText('my-box').includes('LATE'), terminalText('my-box').slice(-200));
-
-// reverse transfer rejected
-r = await manager.transferToAi('my-box');
-check('reverse transfer (ai→ai) rejected', !r.ok, r.error);
+check('my-box primary tab open', manager.tabs.includes('my-box'));
+const c2 = await manager.connect('my-box');
+check('connect again returns a fresh session key', c2.ok && typeof c2.key === 'string' && c2.key.startsWith('my-box#'), JSON.stringify(c2).slice(0, 160));
+check('two tabs open for my-box', manager.tabs.filter((k) => k === 'my-box' || k.startsWith('my-box#')).length === 2, JSON.stringify(manager.tabs));
+// The fresh tab is an independent shell: typing there is its own session
+await waitShell(c2.key);
+const i2 = manager.input(c2.key, 'echo TAB2\r');
+check('typing in the fresh tab accepted', i2.ok, i2.error);
+await sleep(600);
+check('fresh tab shell saw the typed command', manager.terminalSnapshot(c2.key, 0).entries.map((x) => x.text).join('\n').includes('TAB2'));
+// Disconnecting the PRIMARY keeps the fresh tab connected
+await manager.disconnect('my-box');
+check('primary disconnect keeps fresh tab connected', manager.tabPublic(c2.key)?.status === 'connected' && manager.tabs.includes(c2.key), JSON.stringify(manager.tabPublic(c2.key)).slice(0, 120));
+await manager.disconnectKey(c2.key);
+check('fresh tab cleaned up', manager.tabPublic(c2.key)?.status === 'disconnected');
 
 // ---------------------------------------------------------------------------
 // Shared interactive shell: banner/echo stream into the terminal, and the
@@ -263,7 +266,9 @@ check('shell remembers cwd across typed commands', terminalText('web-server').in
 // Criterion 10: reconnect semantics
 // ---------------------------------------------------------------------------
 // unexpected drop → reconnecting → auto-reconnect after restart
+// (close the stale tab first so connect reuses the primary session)
 await manager.disconnect('web-server');
+await manager.closeTab('web-server');
 await manager.connect('web-server');
 check('web-server connected before unplug', manager.statusOf('web-server')?.status === 'connected');
 
@@ -315,6 +320,8 @@ check('no auto-reconnect after explicit disconnect', manager.statusOf('web-serve
 // ---------------------------------------------------------------------------
 // Criterion 6: close-tab vs AI-disconnect tab semantics
 // ---------------------------------------------------------------------------
+// (close the stale tab first so connect reuses the primary session)
+await manager.closeTab('web-server');
 await manager.connect('web-server');
 check('tab opened on connect', manager.tabs.includes('web-server'));
 await manager.closeTab('web-server');
@@ -349,7 +356,6 @@ manager = new SshManager({ credentials: fakeCredentials, logger }, config, HOME)
 manager.initialize();
 const afterNames = manager.store.list().map((x) => x.name).sort();
 check('records survive restart', JSON.stringify(beforeNames) === JSON.stringify(afterNames), `${beforeNames.join(',')} → ${afterNames.join(',')}`);
-check('user source survives restart', manager.store.get('my-box')?.source === 'ai', 'my-box source after restart');
 check('bad-pw record still present', manager.store.get('bad-pw') !== undefined);
 
 // ssh_exec by name without explicit connect (auto-connect from saved info)

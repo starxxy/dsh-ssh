@@ -13,11 +13,11 @@ DeepSeek Harness（DSH）的 SSH 终端插件：AI 代理可在对话中自主�
 ## 功能
 
 - **模型自主管理连接**：`ssh_connect` / `ssh_exec` / `ssh_list` / `ssh_status` / `ssh_disconnect` / `ssh_exec_read` / `ssh_exec_kill` / `ssh_delete`。同一服务端可建立多个独立连接（各自拥有连接名、会话状态与命令队列）。
-- **自动保存与复用**：连接按名称持久化（AI 与用户连接全局唯一）。重启 DSH 后，`ssh_exec` 直接按已保存名称自动建连执行，无需重新传参。
-- **来源模型 `ai` / `user`**：AI 建的连接为 `ai`，设置页建的连接为 `user`。AI 完全不可访问 `user` 连接（`ssh_list` 不列出、其余工具明确拒绝）；支持一次**用户 → AI 所有权转移**（显式确认，标签栏下方对用户创建的激活标签也提供入口），转移后互斥规则随即生效。
+- **自动保存与复用**：连接按名称持久化（名称全局唯一）。重启 DSH 后，`ssh_exec` 直接按已保存名称自动建连执行，无需重新传参。
+- **统一由 AI 管理**：不存在来源区分——无论连接由 AI（`ssh_connect`）还是设置页创建，一律归 AI 代理管理：出现在 `ssh_list` 中，`ssh_exec` / `ssh_status` / `ssh_disconnect` / `ssh_delete` 立即可用，无需任何"转移"步骤。
 - **保活与重连**：空闲心跳；**仅意外断线自动重连**（指数退避、有上限），重连成功提示"shell 状态已重置"；一切显式断开（关标签、`ssh_disconnect`、设置页断开按钮）均不自动重连。
-- **执行互斥（仅 `ai` 来源）**：AI 执行期间终端输入被服务器端丢弃并显示"AI 正在执行中…"；AI 对"共享终端 shell 仍活跃"的连接 `ssh_exec` 会等待其静默（默认 2 秒无输出/输入）或返回"连接忙"。
-- **标签联动**：人工关闭标签 → 立即断开（无确认弹框）；AI 断开 → 标签保留显示已断开、可一键重连；模型自动建连成功 → 自动打开/复用标签。标签栏 **"+"** 按钮可打开已保存连接（**每个选择都会新建一个标签/会话——即使同一连接已在其他标签中连接**）或手动输入新建连接。
+- **执行互斥（所有连接）**：AI 执行期间该终端的人工输入被服务器端丢弃并显示"AI 正在执行中…"（AI 不执行时人类才可以输入）；AI 对"共享终端 shell 仍活跃"的连接 `ssh_exec` 会等待其静默（默认 2 秒无输出/输入）或返回"连接忙"。
+- **标签联动**：人工关闭标签 → 立即断开（无确认弹框）；AI 断开 → 标签保留显示已断开、可一键重连；模型自动建连成功 → 自动打开/复用标签。连接一个已保存连接（标签栏 **"+"**、设置页"连接"按钮）**从不拒绝已打开的连接**：若该连接已有打开的标签，调用会**新建一个独立会话/标签**（即使同一连接已在其他标签中连接）；仅当尚无任何标签时才连接主会话（即模型工具寻址的那个会话）。
 - **实时终端面板——双形态、同一状态**：面板主体可落在两个位置——**DSH 原生右侧详情列**（对话区收缩，不遮挡；关闭后**原始右列（工具详情）原样恢复**，右侧细条可重新打开面板），或 **[dsh-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) 侧边栏**：安装了该插件时，同一份面板主体注册为侧边栏 tab（`dsh-ssh:terminal`，出现在其 **+** 菜单，带连接数实时角标），AI 建连的自动打开也落在那里（并展开侧边栏）。两个形态共享同一条 host 管理的状态流，切换不会分叉终端状态。`panelSurface` 设置（见下文）决定形态：`auto`（默认——装了 sidebar 就用 sidebar）、`sidebar`（优先 sidebar）、`native`（始终原生右列）；未安装 dsh-better-sidebar 时自动全部回退到原生右列。每条连接持有一个**真实交互式 shell（PTY）**：登录横幅（motd / Last login）、远端提示符 `user@host:路径$`、输入回显、`cd` 后路径跟随变化——与原生 SSH 客户端观感一致；**没有独立输入框、没有复制按钮**，点击终端后直接键入，击键直达远端 shell（支持方向键、Tab、Ctrl-C、粘贴、IME）；聚焦后显示闪烁块光标；AI 执行的命令以来源标记同屏显示；多标签、ANSI 颜色、滚动回看；画面自动跟随最新输出保持在底部（大段输出突发也不会脱尾），手动上滑回看历史时不强拉回底部，但 AI 开始操控该连接时会自动滑回底部，始终可见 AI 的实时输出。
 - **设置页管理连接**：设置 → "SSH 连接" 页面集中管理新建、编辑（可重命名）、删除连接及其凭据（密码/私钥存入 DSH 凭证库）、连接/断开。终端分栏内不含增删改功能。
 - **凭证安全**：密码/私钥只进 DSH 凭证库（生成式引用），记录文件、日志、工具返回均不含明文；工具参数内联密钥被拒绝；认证失败返回脱敏的可读原因。
@@ -38,7 +38,7 @@ DeepSeek Harness（DSH）的 SSH 终端插件：AI 代理可在对话中自主�
 dsh plugin --profile web add @jmcc-guo/dsh-ssh
 
 # 或直接从 GitHub 安装
-dsh plugin --profile web add "github:jmcc-guo/dsh-ssh#v0.4.0"
+dsh plugin --profile web add "github:jmcc-guo/dsh-ssh#v0.5.0"
 
 # 或从本地目录安装
 dsh plugin --profile web add <本仓库路径>
@@ -88,14 +88,14 @@ dsh plugin --profile web add <本仓库路径>
 
 ## 模型工具
 
-- `ssh_connect`：新建 AI 连接（认证走凭证引用或密钥文件路径）或重新建立已有连接。
-- `ssh_exec`：按名称在 AI 连接上执行命令；离线自动建连；重连/忙碌时按超时等待；返回输出与退出码；长命令返回 `execId` 供 `ssh_exec_read` / `ssh_exec_kill` 使用。
+- `ssh_connect`：新建连接（认证走凭证引用或密钥文件路径）或重新建立已有连接。
+- `ssh_exec`：按名称在已保存连接上执行命令；离线自动建连；重连/忙碌时按超时等待；返回输出与退出码；长命令返回 `execId` 供 `ssh_exec_read` / `ssh_exec_kill` 使用。
 - `ssh_exec_read`：增量读取（运行中或已结束）命令输出。
 - `ssh_exec_kill`：终止运行中的命令（经 PTY 发送 SIGINT）。
-- `ssh_list`：列出 AI 可见连接及实时状态（绝不包含 `user` 连接）。
-- `ssh_status`：单个 AI 连接的详细状态。
+- `ssh_list`：列出全部已保存连接及实时状态（所有连接统一由 AI 管理）。
+- `ssh_status`：单个已保存连接的详细状态。
 - `ssh_disconnect`：显式断开（不自动重连，可带 `delete`）；面板标签保留显示"已断开"。
-- `ssh_delete`：删除已保存的 AI 连接记录（先断开）。
+- `ssh_delete`：删除已保存的连接记录（先断开）。
 
 **给模型的密钥规则**：不要把密码/私钥明文放进工具参数（会被完整记入会话轨迹并被拒绝）。请使用 `auth.passwordRef` / `auth.privateKeyRef`（已存储的凭证或环境变量名）或 `auth.privateKeyPath`（本机密钥文件路径）。新密钥可通过设置页的"SSH 连接"表单录入，自动存入 DSH 凭证库。
 
@@ -103,7 +103,7 @@ dsh plugin --profile web add <本仓库路径>
 
 - 面板通道（`/ssh/ws`）复用 harness 浏览器信任围栏：回环/信任主机、同源 Origin、拒绝跨站 fetch-metadata。
 - 密钥只存在于凭证库：记录文件仅保存引用，错误信息脱敏，日志无密钥。
-- 命令经远端真实 PTY 执行：ANSI 输出、交互程序、SIGINT 终止均可用；用户击键经 PTY 直达远端 shell，AI 执行期间（ai 来源）输入由服务端丢弃。
+- 命令经远端真实 PTY 执行：ANSI 输出、交互程序、SIGINT 终止均可用；用户击键经 PTY 直达远端 shell，AI 执行期间该终端的人工输入由服务端丢弃（执行互斥，AI 不执行时人类才可输入）。
 
 ## 仓库结构
 
@@ -123,10 +123,12 @@ scripts/                测试套件（见下文）
 `scripts/` 内含验收套件与辅助脚本（需要可达的 SSH 服务；自带测试以 WSL OpenSSH 实例为目标）：
 
 ```bash
-node scripts/test-acceptance.mjs   # 65 项管理层验收套件
+node scripts/test-acceptance.mjs   # 64 项管理层验收套件
 node scripts/smoke.mjs             # 快速冒烟测试
 node scripts/test-panel-ws.mjs     # 面板 WebSocket 通道驱动（测试 web 实例 :3081）
 node scripts/test-rename.mjs       # 重命名专项测试（无需 SSH 服务）
+node scripts/test-connect-tabs.mjs # connect/标签语义专项测试（无需 SSH 服务）
+node scripts/test-panel-channel.mjs # 面板 WS 通道专项测试（无需 SSH 服务，也无需 DSH 实例）
 node scripts/test-client-surface.mjs  # 双形态（原生右列 / dsh-better-sidebar）逻辑（无需 SSH 服务）
 ```
 

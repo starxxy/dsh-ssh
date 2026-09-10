@@ -71,9 +71,9 @@ check('target tunnel ref dropped on delete', manager.store.get('app').tunnel ===
 // Chain cycle detection at connect time (pure logic — no network).
 credentials.set('P1', 'secret-1');
 credentials.set('P2', 'secret-2');
-r = await manager.createRecord({ name: 'cyc-a', host: '10.0.0.3', user: 'u', auth: { passwordRef: 'P1' }, source: 'ai' });
+r = await manager.createRecord({ name: 'cyc-a', host: '10.0.0.3', user: 'u', auth: { passwordRef: 'P1' } });
 check('create cyc-a', r.ok, r.error);
-r = await manager.createRecord({ name: 'cyc-b', host: '10.0.0.4', user: 'u', auth: { passwordRef: 'P2' }, source: 'ai' });
+r = await manager.createRecord({ name: 'cyc-b', host: '10.0.0.4', user: 'u', auth: { passwordRef: 'P2' } });
 check('create cyc-b', r.ok, r.error);
 r = await manager.updateRecordWithSecrets('cyc-a', { name: 'cyc-a', tunnel: 'cyc-b' });
 check('cyc-a tunnels via cyc-b', r.ok, r.error);

@@ -27,7 +27,7 @@ ws.on('message', (data) => {
     return;
   }
   events.push(message);
-  console.log(`EVENT ${message.event}:`, JSON.stringify(message.event === 'state' ? { records: message.state.records.map((r) => ({ name: r.name, source: r.source, status: r.status, busyBy: r.busyBy })), tabs: message.state.tabs } : message).slice(0, 260));
+  console.log(`EVENT ${message.event}:`, JSON.stringify(message.event === 'state' ? { records: message.state.records.map((r) => ({ name: r.name, status: r.status, busyBy: r.busyBy })), tabs: message.state.tabs } : message).slice(0, 260));
 });
 
 ws.on('open', async () => {
@@ -35,11 +35,17 @@ ws.on('open', async () => {
     const snap = await request('snapshot');
     console.log('snapshot records:', snap.records.length, 'tabs:', JSON.stringify(snap.tabs));
 
-    // Simulate the panel form: create a user-source connection with a password
+    // Simulate the panel form: create a connection with a password
     const created = await request('createRecord', {
       name: 'panel-box', host: '127.0.0.1', port: 2222, user: 'jmcc', password: 'testpass123',
     });
     console.log('createRecord:', JSON.stringify(created).slice(0, 200));
+
+    // Connect (opens a tab for the record)
+    const conn1 = await request('connect', { name: 'panel-box' });
+    console.log('connect #1:', JSON.stringify(conn1).slice(0, 160));
+    if (!conn1.ok) throw new Error(`connect #1 failed: ${conn1.error}`);
+    await new Promise((resolve) => setTimeout(resolve, 1200));
 
     // Human command via the panel input bar
     const exec = await request('exec', { name: 'panel-box', command: 'echo PANEL-HELLO; whoami' });
@@ -50,14 +56,20 @@ ws.on('open', async () => {
     console.log('terminal entries:');
     for (const entry of term.entries) console.log(`  [${entry.kind}/${entry.source}] ${entry.text.replace(/\r?\n/g, '\\n').slice(0, 100)}`);
 
-    // Transfer to AI (simulates the panel button)
-    const transfer = await request('transferToAi', { name: 'panel-box' });
-    console.log('transferToAi:', JSON.stringify(transfer).slice(0, 120));
+    // Connect AGAIN while the tab is open → must open a FRESH session/tab
+    // (connect never rejects an already-open connection)
+    const conn2 = await request('connect', { name: 'panel-box' });
+    console.log('connect #2 (tab open):', JSON.stringify(conn2).slice(0, 160));
+    if (!conn2.ok || typeof conn2.key !== 'string' || conn2.key === 'panel-box') {
+      throw new Error('connect with an open tab should return a fresh session key');
+    }
 
     const snap2 = await request('snapshot');
-    console.log('after transfer:', JSON.stringify(snap2.records.map((r) => ({ name: r.name, source: r.source, status: r.status }))));
+    console.log('after 2nd connect:', JSON.stringify(snap2.records.map((r) => ({ name: r.name, status: r.status }))),
+      'tabs:', JSON.stringify(snap2.tabs.map((t) => t.key)));
 
-    // Delete the record (cleanup)
+    // Cleanup: close the fresh tab, then delete the record
+    await request('closeTab', { tab: conn2.key });
     await request('deleteRecord', { name: 'panel-box' });
     console.log('deleted');
   } catch (error) {

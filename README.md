@@ -24,35 +24,36 @@ screen.
   inspects AI-managed connections, disconnects and deletes them. The same
   server may hold several independent connections (each with its own name,
   session state and command queue).
-- **Auto-save & reuse** — every connection is persisted by name (unique
-  across AI and user connections). After a DSH restart, `ssh_exec` on a saved
+- **Auto-save & reuse** — every connection is persisted by name (globally
+  unique). After a DSH restart, `ssh_exec` on a saved
   name automatically re-establishes the connection from its saved settings.
-- **Source model `ai` | `user`** — connections created by the AI are `ai`;
-  connections created from the Settings page are `user`. The AI can never see
-  or touch `user` connections (`ssh_list` hides them; `ssh_exec`/`ssh_status`/
-  `ssh_disconnect`/`ssh_delete` reject them explicitly). A one-way
-  **user → ai transfer** (with explicit confirmation, also offered under the
-  tab bar for a user-created active tab) grants the AI access to a live
-  connection without disconnecting it.
+- **Unified AI management** — there is no source distinction: every saved
+  connection, whether created by the AI (`ssh_connect`) or from the Settings
+  page, is managed by the AI agent. It appears in `ssh_list` and is
+  immediately addressable by `ssh_exec` / `ssh_status` / `ssh_disconnect` /
+  `ssh_delete` — no transfer step exists or is needed.
 - **Keep-alive & reconnect** — idle keep-alive per connection; **automatic
   reconnect only for unexpected drops** (network blips, server resets) with
   exponential backoff (bounded attempts); **every explicit disconnect stays
   down** (tab close, `ssh_disconnect`, Settings "Disconnect" button). A
   "reconnected — the shell state was reset" notice is shown after an
   automatic reconnect.
-- **Execution mutex (ai-source only)** — while an AI command runs on an `ai`
-  connection, keystrokes are dropped server-side with a visible "AI is
-  executing…" hint; a model `ssh_exec` against a connection whose shared
+- **Execution mutex (every connection)** — while an AI command runs on a
+  connection, human keystrokes are dropped server-side with a visible "AI is
+  executing…" hint (the user may only type when the AI is not executing on
+  that terminal); a model `ssh_exec` against a connection whose shared
   terminal shell is still active waits until the shell falls quiet (no
   output/input for `shellQuietWaitMs`, default 2 s) or returns a readable
-  "busy" result instead of interleaving output. `user` connections are never
-  mutexed.
+  "busy" result instead of interleaving output.
 - **Tab semantics** — closing a tab disconnects immediately (no confirmation
   dialog); AI `ssh_disconnect` keeps the tab open showing "disconnected" (one
   click to reconnect); a model connect that has no tab re-opens one
-  automatically. The tab bar's **"+"** opens saved connections — **each pick
-  opens a fresh tab/session, even when that connection is already connected
-  in another tab** — or starts a manual entry.
+  automatically. Connecting a saved connection (tab bar **"+**", the
+  Settings-page Connect button) **never rejects an already-open connection**:
+  when a tab for that connection is already open, the call opens a FRESH
+  independent session in a new tab — even when the same connection is already
+  connected in another tab — and only connects the primary session (the one
+  the model tools address) when no tab is open yet.
 - **Live terminal panel — two surfaces, one state** — the panel body can
   live in **DSH's native right details column** (the conversation shrinks
   instead of being covered; closing restores the original right column
@@ -108,7 +109,7 @@ screen.
 dsh plugin --profile web add @jmcc-guo/dsh-ssh
 
 # or directly from GitHub
-dsh plugin --profile web add "github:jmcc-guo/dsh-ssh#v0.4.0"
+dsh plugin --profile web add "github:jmcc-guo/dsh-ssh#v0.5.0"
 
 # or from a local checkout
 dsh plugin --profile web add <path-to-this-repo>
@@ -168,19 +169,20 @@ the plugin loads fine (verified at runtime).
 
 ## Model tools
 
-- `ssh_connect` — create a new AI connection (host/port/user + auth by
+- `ssh_connect` — create a new connection (host/port/user + auth by
   credential reference or key file path) or re-establish an existing one.
-- `ssh_exec` — run a command on an AI connection by name; auto-reconnects
+- `ssh_exec` — run a command on a saved connection by name; auto-reconnects
   when offline, waits through reconnect/busy states (with timeouts), returns
   output + exit code; long commands return an `execId` for
   `ssh_exec_read` / `ssh_exec_kill`.
 - `ssh_exec_read` — incremental output of a running (or finished) command.
 - `ssh_exec_kill` — terminate a running command (SIGINT through the pty).
-- `ssh_list` — AI-visible connections with live status (never `user` ones).
-- `ssh_status` — detailed status of one AI connection.
+- `ssh_list` — all saved connections with live status (every connection is
+  AI-managed).
+- `ssh_status` — detailed status of one saved connection.
 - `ssh_disconnect` — explicit disconnect (no auto-reconnect; optional
   `delete`); the panel tab stays open showing "disconnected".
-- `ssh_delete` — delete a saved AI connection record (disconnects first).
+- `ssh_delete` — delete a saved connection record (disconnects first).
 
 **Secret rule for the model:** never pass passwords or private keys inline in
 tool arguments (they are recorded verbatim in the session log and rejected).
@@ -199,8 +201,9 @@ them into the DSH credential store.
 - Commands run through real PTYs on the remote host: ANSI output works,
   interactive programs work, and termination is a genuine SIGINT to the
   foreground process group. User keystrokes flow through the shared shell's
-  PTY; while an AI command runs on an `ai`-source connection the host drops
-  keystrokes (input mutex).
+  PTY; while an AI command runs on a connection the host drops keystrokes
+  (input mutex — the user may only type when the AI is not executing on that
+  terminal).
 
 ## Repository layout
 
@@ -221,10 +224,12 @@ scripts/                test suites (see below)
 SSH server; the included tests target a WSL OpenSSH instance):
 
 ```bash
-node scripts/test-acceptance.mjs   # 65-check manager-level acceptance suite
+node scripts/test-acceptance.mjs   # 64-check manager-level acceptance suite
 node scripts/smoke.mjs             # quick smoke test
 node scripts/test-panel-ws.mjs     # panel WebSocket channel drive (test web instance on :3081)
 node scripts/test-rename.mjs       # focused rename test (no SSH server needed)
+node scripts/test-connect-tabs.mjs # focused connect/tab-semantics test (no SSH server needed)
+node scripts/test-panel-channel.mjs # focused panel WS channel test (no SSH server, no DSH instance needed)
 node scripts/test-client-surface.mjs  # dual-surface (native column / dsh-better-sidebar) logic — no server needed
 ```
 

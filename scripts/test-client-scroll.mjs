@@ -149,7 +149,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Boot the plugin, render the SSH column
 // ---------------------------------------------------------------------------
 
-serverTabs = [{ key: 't1', name: 'dgx', source: 'ai', status: 'connected', busyBy: null }];
+serverTabs = [{ key: 't1', name: 'dgx', status: 'connected', busyBy: null }];
 serverRecords = [];
 
 await act(async () => {
@@ -229,7 +229,7 @@ check('scrolled-up reader is not pulled down by ordinary output', fakeScrollTop 
 // --- 4. AI starts operating: view re-pins and slides to the newest output ----
 await act(async () => {
   fakeScrollHeight = 2300;
-  setTabs([{ key: 't1', name: 'dgx', source: 'ai', status: 'connected', busyBy: 'ai' }]);
+  setTabs([{ key: 't1', name: 'dgx', status: 'connected', busyBy: 'ai' }]);
   terminal('t1', [start('uname -a', 'ai'), out('Linux dgx 5.15.0\r\n')]);
 });
 check('AI operation start re-pins the view at the newest output', fakeScrollTop === 2300, `scrollTop=${fakeScrollTop} scrollHeight=${fakeScrollHeight}`);
@@ -252,7 +252,7 @@ check('user can read history during an AI operation', fakeScrollTop === 900, `sc
 // --- 7. command ends: no forced jump back ------------------------------------
 await act(async () => {
   fakeScrollHeight = 2510;
-  setTabs([{ key: 't1', name: 'dgx', source: 'ai', status: 'connected', busyBy: null }]);
+  setTabs([{ key: 't1', name: 'dgx', status: 'connected', busyBy: null }]);
   terminal('t1', [end('exit code: 0', 'ai', 0)]);
 });
 check('command end does not yank the reader back to the bottom', fakeScrollTop === 900, `scrollTop=${fakeScrollTop}`);
@@ -260,7 +260,7 @@ check('command end does not yank the reader back to the bottom', fakeScrollTop =
 // --- 8. next AI operation re-pins again ---------------------------------------
 await act(async () => {
   fakeScrollHeight = 2600;
-  setTabs([{ key: 't1', name: 'dgx', source: 'ai', status: 'connected', busyBy: 'ai' }]);
+  setTabs([{ key: 't1', name: 'dgx', status: 'connected', busyBy: 'ai' }]);
   terminal('t1', [start('df -h', 'ai')]);
 });
 check('the next AI operation re-pins the view again', fakeScrollTop === 2600, `scrollTop=${fakeScrollTop}`);
@@ -269,8 +269,8 @@ check('the next AI operation re-pins the view again', fakeScrollTop === 2600, `s
 await act(async () => {
   fakeScrollHeight = 1800;
   setTabs([
-    { key: 't1', name: 'dgx', source: 'ai', status: 'connected', busyBy: 'ai' },
-    { key: 't2', name: 'box2', source: 'ai', status: 'connected', busyBy: null },
+    { key: 't1', name: 'dgx', status: 'connected', busyBy: 'ai' },
+    { key: 't2', name: 'box2', status: 'connected', busyBy: null },
   ]);
   terminal('t2', [out('banner\r\nuser@box2:~$')]);
 });
