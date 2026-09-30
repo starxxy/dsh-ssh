@@ -8,3 +8,6 @@
 *.md text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
+
+# Patches must keep LF on checkout: a CRLF patch fails to apply under pnpm.
+*.patch text eol=lf
