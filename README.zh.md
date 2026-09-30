@@ -10,6 +10,22 @@
 
 DeepSeek Harness（DSH）的 SSH 终端插件：AI 代理可在对话中自主管理远程连接，Web GUI 右侧提供 XShell / Uniterm 风格的多标签终端面板，模型与人工执行的命令同屏实时显示。
 
+## 兼容性说明
+
+已在 **DSH `0.2.0-rc.2`** 上验证可用，覆盖 **PC 桌面客户端（Windows，Electron）** 与浏览器版 Web 界面，验证日期 **2026-09-30**。
+
+发布的 `0.5.0` 在上述环境无法运行，本分支修复了三处缺陷：
+
+1. **所有客户端上激活即失败。** `apply()` 调用了 DSH 0.2.0-rc.2 已移除的 `ctx.settings.register(name, Config, opts)`，导致工具未注册、`/ssh/ws` 路由未挂载。现改为直接使用 `apply(ctx, config)` 传入的配置。
+2. **WebSocket 地址取自错误的源。** 桌面客户端的主界面文档由其自定义特权协议提供（`dsh-app://app/`），此处 `window.location.host` 为 `app`，插件因此连接了无法解析的地址。现改用内置客户端所用的 `__DSH_TRANSPORT__.streamBaseUrl`。
+3. **信任围栏拒绝了桌面外壳。** 桌面壳发送的 `Origin`（`dsh-app://app`）永远无法等于 `Host`，升级被 **403** 拒绝。现仅额外接受这一个由 Harness 自身持有的源，其余拒绝规则不变。
+
+若使用未修补的 `0.5.0`，症状为：链路指示器变红、Host 上已有记录但列表为空、且所有操作报 `panel link not ready`。
+
+完整证据、握手前后对照表与确切环境记录在 [`PATCH-NOTES.md`](PATCH-NOTES.md)。相关：[issue #1](https://github.com/jmcc-guo/dsh-ssh/issues/1) · [PR #2](https://github.com/jmcc-guo/dsh-ssh/pull/2)。
+
+> 以上改动仅存在于本 fork；在 PR 被合并前，上游仓库保持原样。
+
 ## 功能
 
 - **模型自主管理连接**：`ssh_connect` / `ssh_exec` / `ssh_list` / `ssh_status` / `ssh_disconnect` / `ssh_exec_read` / `ssh_exec_kill` / `ssh_delete`。同一服务端可建立多个独立连接（各自拥有连接名、会话状态与命令队列）。

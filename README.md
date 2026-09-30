@@ -17,6 +17,38 @@ right from the conversation (`ssh_connect` / `ssh_exec` / `ssh_list` /
 Web GUI shows every command — model and human — in real time on the same
 screen.
 
+## Compatibility
+
+Verified working as published on **DSH `0.2.0-rc.2`** with the **PC desktop client
+(Windows, Electron)** as well as the browser-served Web UI. Verified 2026-09-30.
+
+`0.5.0` as published does not run there. Three defects are fixed on this branch:
+
+1. **Activation aborted on every client.** `apply()` called
+   `ctx.settings.register(name, Config, opts)`, removed in DSH 0.2.0-rc.2, so no
+   tools were registered and `/ssh/ws` was never mounted. The row config now comes
+   from `apply(ctx, config)`.
+2. **The WebSocket URL was built from the wrong origin.** The desktop client serves
+   the document from its own privileged origin (`dsh-app://app/`), where
+   `window.location.host` is `app`, so the plugin dialled an unresolvable address.
+   It now uses `__DSH_TRANSPORT__.streamBaseUrl`, the source built-in clients use.
+3. **The trust fence rejected the desktop shell.** The upgrade was refused with
+   `403` because the shell's `Origin` (`dsh-app://app`) can never equal the `Host`
+   authority. That single harness-owned origin is now accepted; every other
+   rejection is unchanged.
+
+Symptom if you run the unpatched `0.5.0`: a red link indicator, an empty
+saved-connection list despite records existing on the Host, and every action failing
+with `panel link not ready`.
+
+Full evidence, the before/after handshake table and the exact environment live in
+[`PATCH-NOTES.md`](PATCH-NOTES.md). Tracking:
+[issue #1](https://github.com/jmcc-guo/dsh-ssh/issues/1) ·
+[PR #2](https://github.com/jmcc-guo/dsh-ssh/pull/2).
+
+> These changes are carried in this fork. The upstream repository is unchanged
+> until the pull request is merged.
+
 ## Features
 
 - **Model-driven connection lifecycle** — the agent connects by name or by
