@@ -1,0 +1,100 @@
+diff --git a/lib/index.js b/lib/index.js
+index da209d8..65dfda3 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -69,14 +69,13 @@ export const Config = z.object({
+  * @param config - composition config for the `dsh-ssh` row.
+  */
+ export async function apply(ctx, config = {}) {
+-  const settings = ctx.settings.register('dsh-ssh', Config, {
+-    base: config,
+-    applies: 'live',
+-  });
+-
++  // DSH 0.2.0-rc.2 dropped `ctx.settings.register(name, Config, opts)`: the
++  // settings service no longer owns per-plugin namespaces, and the config for
++  // this row already arrives through `apply(ctx, config)` with the row's
++  // `Config` schema applied. Use it directly.
+   const manager = new SshManager(
+     { credentials: ctx.credentials, logger: ctx.logger },
+-    settings.get(),
++    config ?? {},
+   );
+   manager.initialize();
+   ctx.logger.info('dsh-ssh: manager ready (%d saved connections)', manager.store.list().length);
+@@ -89,10 +88,16 @@ export async function apply(ctx, config = {}) {
+     throw error;
+   }
+ 
+-  disposers.push(settings.watch((next) => {
+-    manager.reconfigure(next);
+-    ctx.logger.info('dsh-ssh: config applied');
+-  }));
++  // Live config reload is not available through the 0.2.0 settings service; the
++  // manager keeps the config supplied above. It is applied by `settings.watch`
++  // where a legacy settings service still exposes one.
++  const liveSettings = ctx.get('settings');
++  if (liveSettings !== undefined && typeof liveSettings.watch === 'function') {
++    disposers.push(liveSettings.watch((next) => {
++      manager.reconfigure(next);
++      ctx.logger.info('dsh-ssh: config applied');
++    }));
++  }
+ 
+   const webServer = ctx.get('webServer');
+   if (webServer !== undefined) {
+diff --git a/lib/ws.js b/lib/ws.js
+index 758d314..e289b3a 100644
+--- a/lib/ws.js
++++ b/lib/ws.js
+@@ -51,6 +51,16 @@ function isTrustedAuthority(hostUrl, trustedHosts) {
+   });
+ }
+ 
++/** Whether an Origin belongs to the Desktop client's own application document. */
++function isDesktopAppOrigin(origin) {
++  try {
++    const url = new URL(origin);
++    return url.protocol === 'dsh-app:' && url.hostname === 'app';
++  } catch {
++    return false;
++  }
++}
++
+ /** The harness browser-trust decision (mirror of dsh-client-connection). */
+ function isTrustedRequest(req, trustedHosts) {
+   const host = req.headers.host;
+@@ -61,6 +71,11 @@ function isTrustedRequest(req, trustedHosts) {
+   if (req.headers['sec-fetch-site'] === 'cross-site') return false;
+   const origin = req.headers.origin;
+   if (origin === undefined) return true;
++  // The Desktop client embeds this document under its own privileged scheme, so
++  // its Origin can never equal the Host authority. It is the harness's own shell
++  // — the same trust the loopback check already grants — and a remote client
++  // cannot forge it over the network.
++  if (isDesktopAppOrigin(origin)) return true;
+   try {
+     return new URL(origin).host === hostUrl.host;
+   } catch {
+diff --git a/lib/client.js b/lib/client.js
+index 51759f6..1bc3f0a 100644
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -280,8 +280,15 @@ let reconnectTimer = null;
+ 
+ function openWs() {
+   if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+-  ws = new WebSocket(`${proto}://${window.location.host}/ssh/ws`);
++  // The Desktop client serves this document from its own privileged origin
++  // (`dsh-app://app/`), where `window.location.host` is "app" and no WebSocket
++  // can ever open. The harness publishes the real Host origin for exactly this
++  // case as __DSH_TRANSPORT__.streamBaseUrl — the same source built-in clients
++  // use — so prefer it and fall back to the document origin in a plain browser.
++  const base = globalThis.__DSH_TRANSPORT__?.streamBaseUrl ?? window.location.href;
++  const target = new URL('/ssh/ws', base);
++  target.protocol = target.protocol === 'https:' ? 'wss:' : 'ws:';
++  ws = new WebSocket(target.href);
+   ws.onopen = () => {
+     wsConnected = true;
+     store.set({ wsConnected: true });

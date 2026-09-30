@@ -1,276 +1,152 @@
-# @jmcc-guo/dsh-ssh
+# dsh-ssh — DSH 0.2.0 / desktop-client compatibility fork
 
-[English](README.md) · [简体中文](README.zh.md)
+A fork of **[jmcc-guo/dsh-ssh](https://github.com/jmcc-guo/dsh-ssh)** — the SSH terminal
+panel and AI connection manager for DeepSeek Harness (DSH).
 
-![License: MIT](https://img.shields.io/github/license/jmcc-guo/dsh-ssh.svg)
-![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)
-![Type](https://img.shields.io/badge/type-ESM-blueviolet.svg)
+**This page documents only what this fork changes and how to install it.** For what the
+plugin *does* — its features, model tools, settings namespace and security notes — read
+the upstream documentation, which applies here unchanged:
 
-> AI-managed SSH connections with a live multi-tab terminal panel for DeepSeek Harness.
+- [Upstream README (English)](https://github.com/jmcc-guo/dsh-ssh#readme)
+- [上游中文说明](https://github.com/jmcc-guo/dsh-ssh/blob/main/README.zh.md)
 
-SSH terminal panel + AI connection manager for DeepSeek Harness (DSH).
+## Why this fork exists
 
-The AI agent can autonomously create, address, and tear down SSH connections
-right from the conversation (`ssh_connect` / `ssh_exec` / `ssh_list` /
-`ssh_status` / `ssh_disconnect` / `ssh_exec_read` / `ssh_exec_kill` /
-`ssh_delete`), while a XShell/Uniterm-style multi-tab terminal panel in the
-Web GUI shows every command — model and human — in real time on the same
-screen.
+Upstream `v0.5.0` cannot run on DSH `0.2.0-rc.2`. Two independent defects:
 
-## Compatibility
+**1 — Activation fails on every client.** `apply()` calls
+`ctx.settings.register(name, Config, opts)`, an API DSH `0.2.0-rc.2` removed. The plugin
+throws before registering anything: no model tools, and `/ssh/ws` is never mounted.
 
-Verified working as published on **DSH `0.2.0-rc.2`** with the **PC desktop client
-(Windows, Electron)** as well as the browser-served Web UI. Verified 2026-09-30.
+**2 — The panel channel can never open in the PC desktop client.** The desktop shell
+serves the document from its own privileged origin (`dsh-app://app/`), where:
 
-`0.5.0` as published does not run there. Three defects are fixed on this branch:
+- `window.location.host` is `app`, so the URL the client half built
+  (`ws://app/ssh/ws`) can never resolve; and
+- the shell's `Origin` is `dsh-app://app`, which can never equal the `Host` authority,
+  so the bridge rejected the upgrade with `403`.
 
-1. **Activation aborted on every client.** `apply()` called
-   `ctx.settings.register(name, Config, opts)`, removed in DSH 0.2.0-rc.2, so no
-   tools were registered and `/ssh/ws` was never mounted. The row config now comes
-   from `apply(ctx, config)`.
-2. **The WebSocket URL was built from the wrong origin.** The desktop client serves
-   the document from its own privileged origin (`dsh-app://app/`), where
-   `window.location.host` is `app`, so the plugin dialled an unresolvable address.
-   It now uses `__DSH_TRANSPORT__.streamBaseUrl`, the source built-in clients use.
-3. **The trust fence rejected the desktop shell.** The upgrade was refused with
-   `403` because the shell's `Origin` (`dsh-app://app`) can never equal the `Host`
-   authority. That single harness-owned origin is now accepted; every other
-   rejection is unchanged.
+Together they produce the symptom people report:
 
-Symptom if you run the unpatched `0.5.0`: a red link indicator, an empty
-saved-connection list despite records existing on the Host, and every action failing
-with `panel link not ready`.
+> a red link indicator, an empty saved-connection list **even though records exist on
+> the Host**, and every action failing with `panel link not ready`.
 
-Full evidence, the before/after handshake table and the exact environment live in
-[`PATCH-NOTES.md`](PATCH-NOTES.md). Tracking:
-[issue #1](https://github.com/jmcc-guo/dsh-ssh/issues/1) ·
-[PR #2](https://github.com/jmcc-guo/dsh-ssh/pull/2).
+Defect 1 is **not** desktop-specific — it breaks the plugin on any DSH `>= 0.2.0-rc.2`,
+browser included. Defect 2 only surfaces in the desktop client, which is why testing in a
+browser alone never catches it.
 
-> These changes are carried in this fork. The upstream repository is unchanged
-> until the pull request is merged.
+## What this fork changes
 
-## Features
+Three files. No version bump, no dependency change:
 
-- **Model-driven connection lifecycle** — the agent connects by name or by
-  parameters, runs commands with exit codes and readable failures, lists and
-  inspects AI-managed connections, disconnects and deletes them. The same
-  server may hold several independent connections (each with its own name,
-  session state and command queue).
-- **Auto-save & reuse** — every connection is persisted by name (globally
-  unique). After a DSH restart, `ssh_exec` on a saved
-  name automatically re-establishes the connection from its saved settings.
-- **Unified AI management** — there is no source distinction: every saved
-  connection, whether created by the AI (`ssh_connect`) or from the Settings
-  page, is managed by the AI agent. It appears in `ssh_list` and is
-  immediately addressable by `ssh_exec` / `ssh_status` / `ssh_disconnect` /
-  `ssh_delete` — no transfer step exists or is needed.
-- **Keep-alive & reconnect** — idle keep-alive per connection; **automatic
-  reconnect only for unexpected drops** (network blips, server resets) with
-  exponential backoff (bounded attempts); **every explicit disconnect stays
-  down** (tab close, `ssh_disconnect`, Settings "Disconnect" button). A
-  "reconnected — the shell state was reset" notice is shown after an
-  automatic reconnect.
-- **Execution mutex (every connection)** — while an AI command runs on a
-  connection, human keystrokes are dropped server-side with a visible "AI is
-  executing…" hint (the user may only type when the AI is not executing on
-  that terminal); a model `ssh_exec` against a connection whose shared
-  terminal shell is still active waits until the shell falls quiet (no
-  output/input for `shellQuietWaitMs`, default 2 s) or returns a readable
-  "busy" result instead of interleaving output.
-- **Tab semantics** — closing a tab disconnects immediately (no confirmation
-  dialog); AI `ssh_disconnect` keeps the tab open showing "disconnected" (one
-  click to reconnect); a model connect that has no tab re-opens one
-  automatically. Connecting a saved connection (tab bar **"+**", the
-  Settings-page Connect button) **never rejects an already-open connection**:
-  when a tab for that connection is already open, the call opens a FRESH
-  independent session in a new tab — even when the same connection is already
-  connected in another tab — and only connects the primary session (the one
-  the model tools address) when no tab is open yet.
-- **Live terminal panel — two surfaces, one state** — the panel body can
-  live in **DSH's native right details column** (the conversation shrinks
-  instead of being covered; closing restores the original right column
-  untouched; a slim SSH rail on the right edge reopens it) **or inside
-  [dsh-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar)**:
-  when that plugin is installed, the same panel body registers as a sidebar
-  tab (`dsh-ssh:terminal` — visible in its **+** menu, with a live
-  connection-count badge), and the AI-connect auto-open lands there (opening
-  and expanding the sidebar). Both surfaces share the one host-managed state
-  stream, so switching never forks the terminals. `panelSurface` (see
-  settings below) chooses the surface: `auto` (default — sidebar when
-  installed), `sidebar` (prefer sidebar), `native` (always the built-in
-  column). Without dsh-better-sidebar everything falls back to the native
-  column automatically. Each connection owns **one real interactive shell
-  (PTY)**: the
-  login banner (motd / Last login), the remote prompt `user@host:path$`,
-  input echo and `cd` updates all come from the remote shell, exactly like a
-  native SSH client. There is **no input box and no copy control** — click
-  the terminal and type; keystrokes go straight into the remote shell
-  (arrows, Tab, Ctrl-C, paste, IME supported). A blinking block cursor shows
-  while the terminal is focused. AI-run commands appear in the same
-  scrollback with source tags. Multi-tab, ANSI colors, scrollback. The view
-   stays pinned to the newest output as it arrives — even large output bursts
-   follow to the bottom; scrolling up to read history is respected (no forced
-   jump), but whenever the AI starts operating the connection the terminal
-   slides back to the bottom so the AI's live output is visible.
-- **Settings page** — "SSH Connections" under Settings manages everything:
-  create, edit (rename supported), delete connections and their credentials
-  (passwords / private keys stored in the DSH credential store), and
-  connect/disconnect. The terminal column itself contains no CRUD.
-- **Credential hygiene** — passwords and private keys live in the DSH
-  credential store under generated references; the records file, logs and
-  tool results never contain secret material; inline secrets in tool
-  arguments are rejected with guidance; auth failures return scrubbed,
-  readable reasons.
-- **Settings** — the `dsh-ssh` settings namespace (heartbeat, reconnect
-  policy, timeouts, output caps, records path) can be overridden through the
-  DSH settings system / profile patch.
-- **Bilingual UI** — Chinese and English copy.
+| File | Change |
+|---|---|
+| `lib/index.js` | Read the row config from `apply(ctx, config)` instead of the removed `ctx.settings.register`. `settings.watch` live reload is kept only where a legacy settings service still exposes it; otherwise a config change applies at next boot |
+| `lib/ws.js` | Additionally accept the harness-owned desktop origin `dsh-app://app` in the trust fence. Every other rejection is unchanged |
+| `lib/client.js` | Build the WebSocket URL from `__DSH_TRANSPORT__.streamBaseUrl` — the source the built-in DSH clients use — falling back to the document origin in a plain browser |
 
-## Requirements
+Full write-up and raw evidence: [`PATCH-NOTES.md`](PATCH-NOTES.md).
 
-- Node.js >= 18 (ESM)
-- pnpm (lockfile: `pnpm-lock.yaml`)
-- A DeepSeek Harness (DSH) installation with the `web` profile
-- For the test suite: a reachable SSH server (the included tests target a
-  local WSL OpenSSH instance; see `scripts/test-acceptance.mjs`)
+## Install
 
-## Install into a profile
+Requires a DSH installation with the `web` or desktop profile, and Node.js >= 18.
+
+The plugin's peer ranges (`^0.1.0-rc.6`) predate DSH 0.2.0, so DSH asks for an explicit
+risk acknowledgement once:
 
 ```bash
-# from npm (recommended)
-dsh plugin --profile web add @jmcc-guo/dsh-ssh
+# 1. acknowledge the peer-range mismatch (once)
+dsh plugin --profile desktop allow-version @jmcc-guo/dsh-ssh@0.5.0 \
+  --dsh-version 0.2.0-rc.2 --accept-risk
 
-# or directly from GitHub
-dsh plugin --profile web add "github:jmcc-guo/dsh-ssh#v0.5.0"
+# 2. install this fork — `main` already carries the fixes
+dsh plugin --profile desktop add "github:starxxy/dsh-ssh#main"
 
-# or from a local checkout
-dsh plugin --profile web add <path-to-this-repo>
+# 3. restart DSH: the plugin set and the client bundle graph are composed at boot
 ```
 
-The bundle patch (`cordis.patch.yml`) mounts the `dsh-ssh` row. Override
-config in the profile patch with the same row id:
+Substitute your profile name for `desktop` (`web` for the browser profile).
+
+<details>
+<summary>Alternative: stay on npm's <code>0.5.0</code> and patch it</summary>
+
+If you would rather keep tracking the published package, install it normally and apply
+the same three edits as a `pnpm` patch:
+
+```bash
+dsh plugin --profile desktop add @jmcc-guo/dsh-ssh
+```
+
+Then copy [`patches/@jmcc-guo__dsh-ssh@0.5.0.patch`](patches/) into your profile's
+`patches/` directory and register it. In pnpm 11 that setting belongs in
+`pnpm-workspace.yaml`, **not** in `package.json` — a `pnpm` field there is silently
+ignored:
 
 ```yaml
-- id: dsh-ssh
-  config:
-    heartbeatIntervalMs: 20000
-    reconnectMaxAttempts: 8
-    outputLimitBytes: 2097152
+# <profile>/pnpm-workspace.yaml
+patchedDependencies:
+  '@jmcc-guo/dsh-ssh@0.5.0': patches/@jmcc-guo__dsh-ssh@0.5.0.patch
 ```
 
-Restart the profile process afterwards (plugin-set changes and the client
-bundle graph are composed at boot).
+Then run `pnpm install` inside the profile. If pnpm answers *"Already up to date"*
+without re-applying anything, delete `<profile>/node_modules/.modules.yaml` first — pnpm
+caches the link state there and will otherwise skip the package.
 
-## Troubleshooting
+</details>
 
-### ssh2 is bundled — no build steps needed
+## How to use
 
-`ssh2` and its full dependency closure are shipped **bundled inside the
-package** (`bundleDependencies`), so installing `@jmcc-guo/dsh-ssh` never runs
-dependency build scripts: no `allowBuilds` edits, no
-`ERR_PNPM_IGNORED_BUILDS`. ssh2 runs on its pure-JS implementation, which is
-fully functional (verified against a real SSH server); the optional native
-crypto binding is intentionally not compiled.
+Usage is identical to upstream; see its docs for the full surface. In short:
 
-### Peer-dependency warnings
+- **From the assistant** — the plugin contributes `ssh_connect` / `ssh_exec` /
+  `ssh_exec_read` / `ssh_exec_kill` / `ssh_list` / `ssh_status` / `ssh_disconnect` /
+  `ssh_delete`. Saved connections reconnect on demand, so you can address one by name
+  without connecting it first.
+- **From the GUI** — open the SSH panel from the right rail, then manage connections
+  under **Settings → SSH Connections**. The panel holds real multi-tab PTYs plus a file
+  browser (upload, download, and in-place editing of UTF-8 text up to 64 KB).
 
-`pnpm peers check` may report "missing peer" for the `@deepseek-ai/*` packages
-even though DSH provides them: with the hoisted profile layout, external
-plugins resolve host packages at runtime from the shared `profiles/node_modules`
-tree, which pnpm's static peer check does not cross. The warnings are benign —
-the plugin loads fine (verified at runtime).
+> If you are here because of `panel link not ready` in the desktop client, the two
+> defects above are the entire cause: install this fork and restart.
 
-## Settings namespace (`dsh-ssh`)
+> **Configuration is read at boot in this build.** A change to the `dsh-ssh` row in the
+> profile patch takes effect on the next start, not live.
 
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `heartbeatIntervalMs` | 30000 | ssh2 keep-alive interval |
-| `keepaliveCountMax` | 3 | keep-alive failures before the connection is considered dead |
-| `connectTimeoutMs` | 15000 | SSH handshake / TCP connect timeout |
-| `reconnectBaseDelayMs` | 2000 | first auto-reconnect delay (doubles per attempt) |
-| `reconnectMaxDelayMs` | 60000 | backoff cap |
-| `reconnectMaxAttempts` | 5 | max automatic reconnect attempts |
-| `execTimeoutMs` | 120000 | default `ssh_exec` completion wait |
-| `busyWaitTimeoutMs` | 20000 | default mutex wait when the connection is busy |
-| `reconnectWaitTimeoutMs` | 30000 | default wait while reconnecting |
-| `shellQuietWaitMs` | 2000 | shared-shell silence required before AI may run |
-| `outputLimitBytes` | 1048576 | per-connection terminal buffer cap |
-| `execOutputMaxBytes` | 200000 | cap on output returned to the model per command |
-| `recordsPath` | `$DSH_HOME/storages/dsh-ssh/connections.json` | records file override |
-| `panelSurface` | `auto` | where the Web panel lives: `auto` = dsh-better-sidebar when installed, else the native column; `sidebar` = prefer dsh-better-sidebar (falls back to native when absent); `native` = always the built-in details column. Applied live to open panels |
+## Verified
 
-## Model tools
+| | |
+|---|---|
+| DSH | `0.2.0-rc.2` |
+| Plugin | `@jmcc-guo/dsh-ssh@0.5.0` |
+| Client | PC desktop client (Windows, Electron) **and** browser Web UI |
+| Date | 2026-09-30 |
 
-- `ssh_connect` — create a new connection (host/port/user + auth by
-  credential reference or key file path) or re-establish an existing one.
-- `ssh_exec` — run a command on a saved connection by name; auto-reconnects
-  when offline, waits through reconnect/busy states (with timeouts), returns
-  output + exit code; long commands return an `execId` for
-  `ssh_exec_read` / `ssh_exec_kill`.
-- `ssh_exec_read` — incremental output of a running (or finished) command.
-- `ssh_exec_kill` — terminate a running command (SIGINT through the pty).
-- `ssh_list` — all saved connections with live status (every connection is
-  AI-managed).
-- `ssh_status` — detailed status of one saved connection.
-- `ssh_disconnect` — explicit disconnect (no auto-reconnect; optional
-  `delete`); the panel tab stays open showing "disconnected".
-- `ssh_delete` — delete a saved connection record (disconnects first).
+Raw WebSocket upgrade handshakes against `/ssh/ws`:
 
-**Secret rule for the model:** never pass passwords or private keys inline in
-tool arguments (they are recorded verbatim in the session log and rejected).
-Use `auth.passwordRef` / `auth.privateKeyRef` (a stored credential or
-environment variable) or `auth.privateKeyPath` (a key file on the host).
-New secrets can be stored through the panel's connection form, which routes
-them into the DSH credential store.
+| Request | Unpatched `0.5.0` | This fork |
+|---|---|---|
+| `Origin: dsh-app://app` (desktop client) | `403` | **`101 Switching Protocols`** |
+| `Origin: http://127.0.0.1:<port>` (browser, same-origin) | `101` | **`101`** |
+| `Origin: http://evil.example` | `403` | **`403`** |
+| `Origin: http://127.0.0.1:9999` (other port) | `403` | **`403`** |
+| `Origin: dsh-app://evil` (forged scheme host) | `403` | **`403`** |
+| Non-loopback `Host`, no `Origin` | `403` | **`403`** |
 
-## Security notes
+The fence loses no rejection: only the harness's own shell origin is additionally
+accepted, and a remote client cannot forge it. An authenticated `snapshot` round-trip
+then completes and `ssh_connect` / `ssh_exec` succeed against a real server.
 
-- The panel channel (`/ssh/ws`) applies the harness browser-trust fence:
-  loopback/trusted-host Host, same-origin Origin, cross-site fetch-metadata
-  rejection.
-- Secrets never leave the credential store: the records file holds
-  references only; error messages are scrubbed; logs contain no secrets.
-- Commands run through real PTYs on the remote host: ANSI output works,
-  interactive programs work, and termination is a genuine SIGINT to the
-  foreground process group. User keystrokes flow through the shared shell's
-  PTY; while an AI command runs on a connection the host drops keystrokes
-  (input mutex — the user may only type when the AI is not executing on that
-  terminal).
+## Upstream
 
-## Repository layout
+The fix is reported and proposed upstream:
 
-```
-lib/index.js            plugin entry: config schema, manager + tools + panel channel wiring
-lib/manager.js          SshManager — connection lifecycle, keep-alive/reconnect, mutex, PTY shells
-lib/tools.js            model tools (ssh_connect / ssh_exec / ssh_exec_read / ssh_exec_kill / ...)
-lib/ws.js               panel WebSocket channel (/ssh/ws) with the browser-trust fence
-lib/store.js            persisted connection records
-lib/client.js           Web GUI client: multi-tab terminal panel + settings UI
-cordis.patch.yml        bundle patch that mounts the dsh-ssh row
-scripts/                test suites (see below)
-```
+- Issue — [jmcc-guo/dsh-ssh#1](https://github.com/jmcc-guo/dsh-ssh/issues/1)
+- Pull request — [jmcc-guo/dsh-ssh#2](https://github.com/jmcc-guo/dsh-ssh/pull/2)
+- Branch — [`fix/dsh-0.2.0-desktop-client`](https://github.com/starxxy/dsh-ssh/tree/fix/dsh-0.2.0-desktop-client)
 
-## Development / tests
-
-`scripts/` contains the acceptance suite and helpers (requires a reachable
-SSH server; the included tests target a WSL OpenSSH instance):
-
-```bash
-node scripts/test-acceptance.mjs   # 64-check manager-level acceptance suite
-node scripts/smoke.mjs             # quick smoke test
-node scripts/test-panel-ws.mjs     # panel WebSocket channel drive (test web instance on :3081)
-node scripts/test-rename.mjs       # focused rename test (no SSH server needed)
-node scripts/test-connect-tabs.mjs # focused connect/tab-semantics test (no SSH server needed)
-node scripts/test-panel-channel.mjs # focused panel WS channel test (no SSH server, no DSH instance needed)
-node scripts/test-client-surface.mjs  # dual-surface (native column / dsh-better-sidebar) logic — no server needed
-```
-
-## Contributing
-
-Issues and pull requests are welcome. Keep the model-facing surface (tool
-names, parameter semantics, result shapes) backward compatible, and make sure
-secrets never end up in logs, records or tool results.
+Until that pull request is merged, this fork is the ready-to-install version. Apart from
+the three files above and the added documentation, `main` tracks upstream.
 
 ## License
 
-MIT
+MIT, unchanged from upstream. Original work © jmcc-guo — see [`LICENSE`](LICENSE).
